@@ -1,70 +1,61 @@
 // ============================================================
-// db.js — JSON file database (lowdb) + auto-seed on first run
+// db.js - MongoDB connection and product seeding
 //
-// Product images/data are pulled LIVE from DummyJSON (https://dummyjson.com) —
-// a free, public API built specifically for e-commerce demos/prototypes, so
-// every product has a REAL name, REAL brand, REAL price/rating, and a REAL
-// photo (hosted on DummyJSON's own CDN, not scraped — safe & reliable).
+// Product data is pulled LIVE from DummyJSON (https://dummyjson.com), a free
+// public API built specifically for e-commerce demos/prototypes, so every
+// product has a real name, brand, price, rating, and photo.
 //
 // DummyJSON doesn't have Books / Toys & Baby / Pet Supplies categories, so
-// those three are filled in with the synthetic icon-tile generator instead
-// (clearly marked with photo:null) — see README for details.
+// those three are filled in with a synthetic generator instead.
 // ============================================================
-const low = require('lowdb');
-const FileSync = require('lowdb/adapters/FileSync');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const path = require('path');
+const Product = require('./models/Product');
+const User = require('./models/User');
+const Coupon = require('./models/Coupon');
 
-const adapter = new FileSync(path.join(__dirname, 'db.json'));
-const db = low(adapter);
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/shopwave';
 
-db.defaults({
-  products: [],
-  users: [],
-  orders: [],
-  reviews: [],
-  coupons: [
-    { code: 'WELCOME', pct: 15 },
-    { code: 'SAVE10', pct: 10 },
-    { code: 'SHOPWAVE', pct: 20 }
-  ]
-}).write();
+async function connectDB() {
+  if (mongoose.connection.readyState === 0) {
+    await mongoose.connect(MONGO_URI);
+    console.log('MongoDB connected (ShopWave)');
+  }
+}
 
-// Maps DummyJSON's raw category slugs -> our India-style storefront categories + a friendly subcategory label.
 const CATEGORY_MAP = {
-  smartphones:        { category: 'Electronics', subcategory: 'Smartphones' },
-  laptops:             { category: 'Electronics', subcategory: 'Laptops' },
-  tablets:             { category: 'Electronics', subcategory: 'Tablets' },
-  'mobile-accessories': { category: 'Electronics', subcategory: 'Computer Accessories' },
-  'mens-shirts':       { category: 'Fashion', subcategory: "Men's Clothing" },
-  tops:                { category: 'Fashion', subcategory: "Women's Clothing" },
-  'womens-dresses':    { category: 'Fashion', subcategory: "Women's Clothing" },
-  'mens-shoes':        { category: 'Fashion', subcategory: 'Footwear' },
-  'womens-shoes':      { category: 'Fashion', subcategory: 'Footwear' },
-  'mens-watches':      { category: 'Fashion', subcategory: 'Watches' },
-  'womens-watches':    { category: 'Fashion', subcategory: 'Watches' },
-  'womens-bags':       { category: 'Fashion', subcategory: 'Handbags' },
-  'womens-jewellery':  { category: 'Fashion', subcategory: 'Jewelry' },
-  sunglasses:          { category: 'Fashion', subcategory: 'Sunglasses' },
-  beauty:              { category: 'Beauty & Personal Care', subcategory: 'Makeup' },
-  fragrances:          { category: 'Beauty & Personal Care', subcategory: 'Perfumes' },
-  'skin-care':         { category: 'Beauty & Personal Care', subcategory: 'Skincare' },
-  furniture:           { category: 'Home & Kitchen', subcategory: 'Furniture' },
-  'home-decoration':   { category: 'Home & Kitchen', subcategory: 'Home Decor' },
+  smartphones:          { category: 'Electronics', subcategory: 'Smartphones' },
+  laptops:               { category: 'Electronics', subcategory: 'Laptops' },
+  tablets:               { category: 'Electronics', subcategory: 'Tablets' },
+  'mobile-accessories':  { category: 'Electronics', subcategory: 'Computer Accessories' },
+  'mens-shirts':         { category: 'Fashion', subcategory: "Men's Clothing" },
+  tops:                  { category: 'Fashion', subcategory: "Women's Clothing" },
+  'womens-dresses':      { category: 'Fashion', subcategory: "Women's Clothing" },
+  'mens-shoes':          { category: 'Fashion', subcategory: 'Footwear' },
+  'womens-shoes':        { category: 'Fashion', subcategory: 'Footwear' },
+  'mens-watches':        { category: 'Fashion', subcategory: 'Watches' },
+  'womens-watches':      { category: 'Fashion', subcategory: 'Watches' },
+  'womens-bags':         { category: 'Fashion', subcategory: 'Handbags' },
+  'womens-jewellery':    { category: 'Fashion', subcategory: 'Jewelry' },
+  sunglasses:            { category: 'Fashion', subcategory: 'Sunglasses' },
+  beauty:                { category: 'Beauty & Personal Care', subcategory: 'Makeup' },
+  fragrances:            { category: 'Beauty & Personal Care', subcategory: 'Perfumes' },
+  'skin-care':           { category: 'Beauty & Personal Care', subcategory: 'Skincare' },
+  furniture:             { category: 'Home & Kitchen', subcategory: 'Furniture' },
+  'home-decoration':     { category: 'Home & Kitchen', subcategory: 'Home Decor' },
   'kitchen-accessories': { category: 'Home & Kitchen', subcategory: 'Kitchen Appliances' },
-  groceries:           { category: 'Grocery', subcategory: 'Packaged Foods' },
-  'sports-accessories': { category: 'Sports & Fitness', subcategory: 'Outdoor Sports' },
-  motorcycle:          { category: 'Automotive', subcategory: 'Bike Accessories' },
-  vehicle:             { category: 'Automotive', subcategory: 'Car Accessories' }
+  groceries:             { category: 'Grocery', subcategory: 'Packaged Foods' },
+  'sports-accessories':  { category: 'Sports & Fitness', subcategory: 'Outdoor Sports' },
+  motorcycle:            { category: 'Automotive', subcategory: 'Bike Accessories' },
+  vehicle:               { category: 'Automotive', subcategory: 'Car Accessories' }
 };
 
-const EMOJI_BY_CATEGORY = {
-  Electronics: '💻', Fashion: '👗', 'Beauty & Personal Care': '💄',
-  'Home & Kitchen': '🍳', Grocery: '🛒', 'Sports & Fitness': '🏋️',
-  Automotive: '🚗', Books: '📚', 'Toys & Baby': '🧸', 'Pet Supplies': '🐶'
+const ICON_BY_CATEGORY = {
+  Electronics: 'Electronics', Fashion: 'Fashion', 'Beauty & Personal Care': 'Beauty',
+  'Home & Kitchen': 'Home', Grocery: 'Grocery', 'Sports & Fitness': 'Sports',
+  Automotive: 'Auto', Books: 'Books', 'Toys & Baby': 'Toys', 'Pet Supplies': 'Pets'
 };
 
-// ---------- FETCH REAL PRODUCTS FROM DUMMYJSON ----------
 async function fetchRealProducts() {
   const res = await fetch('https://dummyjson.com/products?limit=0');
   if (!res.ok) throw new Error('DummyJSON request failed: ' + res.status);
@@ -74,7 +65,7 @@ async function fetchRealProducts() {
     const originalPrice = p.discountPercentage > 1 ? +(p.price / (1 - p.discountPercentage / 100)).toFixed(2) : 0;
     const badgeRoll = Math.random();
     const badge = p.stock === 0 ? null : p.discountPercentage > 15 ? 'sale' : badgeRoll > 0.85 ? 'hot' : badgeRoll > 0.72 ? 'new' : null;
-    const badgeText = badge === 'hot' ? '🔥 Hot' : badge === 'new' ? '✨ New' : badge === 'sale' ? `${Math.round(p.discountPercentage)}% OFF` : null;
+    const badgeText = badge === 'hot' ? 'Hot' : badge === 'new' ? 'New' : badge === 'sale' ? `${Math.round(p.discountPercentage)}% OFF` : null;
     return {
       id: p.id,
       name: p.title,
@@ -86,7 +77,7 @@ async function fetchRealProducts() {
       rating: +p.rating.toFixed(1),
       reviews: (p.reviews && p.reviews.length ? p.reviews.length * 137 : 0) + Math.floor(Math.random() * 900) + 20,
       badge, badgeText,
-      emoji: EMOJI_BY_CATEGORY[map.category] || '📦',
+      emoji: ICON_BY_CATEGORY[map.category] || 'Product',
       photo: p.thumbnail,
       stock: p.stock,
       description: p.description,
@@ -98,11 +89,9 @@ async function fetchRealProducts() {
   });
 }
 
-// ---------- SYNTHETIC FALLBACK GENERATOR (used for Books / Toys & Baby / Pet Supplies,
-// and as an offline fallback if DummyJSON can't be reached) ----------
 function generateSynthetic(category, subcatDefs, count, startId) {
   const TAGS_POOL = ['bestseller', 'trending', 'premium', 'eco-friendly', 'limited-edition', 'handpicked', 'durable', 'giftable', 'everyday-use'];
-  const emoji = EMOJI_BY_CATEGORY[category] || '📦';
+  const icon = ICON_BY_CATEGORY[category] || 'Product';
   const products = [];
   let id = startId;
   for (let i = 0; i < count; i++) {
@@ -116,7 +105,7 @@ function generateSynthetic(category, subcatDefs, count, startId) {
     const stock = Math.random() > 0.08 ? Math.floor(Math.random() * 60) : 0;
     const badgeRoll = Math.random();
     const badge = stock === 0 ? null : badgeRoll > 0.85 ? 'hot' : badgeRoll > 0.7 ? 'new' : badgeRoll > 0.55 ? 'sale' : null;
-    const badgeText = badge === 'hot' ? '🔥 Hot' : badge === 'new' ? '✨ New' : badge === 'sale' ? 'Sale' : null;
+    const badgeText = badge === 'hot' ? 'Hot' : badge === 'new' ? 'New' : badge === 'sale' ? 'Sale' : null;
     products.push({
       id: id++,
       name: `${adj} ${noun}`,
@@ -128,14 +117,14 @@ function generateSynthetic(category, subcatDefs, count, startId) {
       rating,
       reviews: Math.floor(Math.random() * 3000) + 15,
       badge, badgeText,
-      emoji,
-      photo: null, // no real photo source available for this category — see README
+      emoji: icon,
+      photo: null,
       stock,
-      description: `${adj} ${noun} from our ${sub.name} range — quality checked and ready to ship.`,
+      description: `${adj} ${noun} from our ${sub.name} range - quality checked and ready to ship.`,
       tags: [...TAGS_POOL].sort(() => 0.5 - Math.random()).slice(0, 3),
       colors: ['#8b5cf6', '#22d3ee', '#f472b6', '#34d399'],
       sizes: ['Standard'],
-      images: [emoji, emoji, emoji, emoji]
+      images: []
     });
   }
   return products;
@@ -148,9 +137,9 @@ function generateFallbackCategories(startId) {
   const books = generateSynthetic('Books', [
     { name: 'Educational', adj: ['Illustrated', 'Complete', 'Essential'], nouns: ['Science Guide', 'Math Workbook', 'History Atlas'] },
     { name: 'Novels', adj: ['Bestselling', 'Classic', 'Modern'], nouns: ['Mystery Novel', 'Romance Novel', 'Thriller Novel'] },
-    { name: 'Comics', adj: ['Deluxe', 'Collector\u2019s', 'Junior'], nouns: ['Comic Anthology', 'Graphic Novel', 'Manga Volume'] },
+    { name: 'Comics', adj: ['Deluxe', "Collector's", 'Junior'], nouns: ['Comic Anthology', 'Graphic Novel', 'Manga Volume'] },
     { name: 'Competitive Exams', adj: ['Complete', 'Updated', 'Practice'], nouns: ['Exam Guide', 'Mock Test Set', 'Reasoning Book'] },
-    { name: 'Technology', adj: ['Practical', 'Modern', 'Beginner\u2019s'], nouns: ['Programming Guide', 'AI Handbook', 'Web Dev Book'] },
+    { name: 'Technology', adj: ['Practical', 'Modern', "Beginner's"], nouns: ['Programming Guide', 'AI Handbook', 'Web Dev Book'] },
     { name: 'Biography', adj: ['Inspiring', 'Bestselling', 'Illustrated'], nouns: ['Life Story', 'Memoir', 'Autobiography'] }
   ], 24, id); id += books.length; all = all.concat(books);
 
@@ -171,32 +160,32 @@ function generateFallbackCategories(startId) {
   return all;
 }
 
-// ---------- SEED ----------
 async function seedProducts() {
-  if (db.get('products').size().value() > 0) return; // already seeded
+  const count = await Product.countDocuments();
+  if (count > 0) return;
 
   let realProducts = [];
   try {
     realProducts = await fetchRealProducts();
-    console.log(`✅ Fetched ${realProducts.length} real products (with real images) from DummyJSON`);
+    console.log(`Fetched ${realProducts.length} real products from DummyJSON`);
   } catch (err) {
-    console.warn('⚠️  Could not reach DummyJSON API (' + err.message + ') — using synthetic products only for those categories.');
+    console.warn('Could not reach DummyJSON API (' + err.message + ') - using synthetic products only for those categories.');
   }
 
   const maxId = realProducts.reduce((m, p) => Math.max(m, p.id), 0);
   const fallbackProducts = generateFallbackCategories(maxId + 1);
   const products = [...realProducts, ...fallbackProducts];
 
-  db.set('products', products).write();
+  await Product.insertMany(products);
   const cats = [...new Set(products.map(p => p.category))];
-  console.log(`✅ Seeded ${products.length} products across ${cats.length} categories (${realProducts.length} with real photos)`);
+  console.log(`Seeded ${products.length} products across ${cats.length} categories (${realProducts.length} with real photos)`);
 }
 
-function seedAdmin() {
-  const existing = db.get('users').find({ email: 'admin@shopwave.com' }).value();
+async function seedAdmin() {
+  const existing = await User.findOne({ email: 'admin@shopwave.com' });
   if (existing) return;
   const hashed = bcrypt.hashSync('admin123', 10);
-  db.get('users').push({
+  await User.create({
     id: 1,
     name: 'Admin',
     email: 'admin@shopwave.com',
@@ -205,17 +194,26 @@ function seedAdmin() {
     points: 0,
     referral: 'SW-ADMIN',
     addresses: [],
-    createdAt: new Date().toISOString()
-  }).write();
-  console.log('✅ Seeded default admin user: admin@shopwave.com / admin123');
+    cart: []
+  });
+  console.log('Seeded default admin user: admin@shopwave.com / admin123');
 }
 
-// Exposed init function — server.js awaits this before starting to listen,
-// since product seeding now involves a real network call to DummyJSON.
+async function seedCoupons() {
+  const count = await Coupon.countDocuments();
+  if (count > 0) return;
+  await Coupon.insertMany([
+    { code: 'WELCOME', pct: 15 },
+    { code: 'SAVE10', pct: 10 },
+    { code: 'SHOPWAVE', pct: 20 }
+  ]);
+}
+
 async function initDB() {
+  await connectDB();
+  await seedCoupons();
   await seedProducts();
-  seedAdmin();
+  await seedAdmin();
 }
 
-module.exports = db;
-module.exports.initDB = initDB;
+module.exports = { connectDB, initDB };

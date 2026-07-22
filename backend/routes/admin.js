@@ -1,15 +1,16 @@
 const express = require('express');
-const db = require('../db');
+const Order = require('../models/Order');
+const Product = require('../models/Product');
+const User = require('../models/User');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(verifyToken, requireAdmin);
 
-// GET /api/admin/stats
-router.get('/stats', (req, res) => {
-  const orders = db.get('orders').value();
-  const products = db.get('products').value();
-  const users = db.get('users').value();
+router.get('/stats', async (req, res) => {
+  const orders = await Order.find().lean();
+  const products = await Product.find().lean();
+  const users = await User.find().lean();
   const revenue = orders.reduce((s, o) => s + o.total, 0);
 
   const days = [...Array(7)].map((_, i) => {
@@ -30,15 +31,13 @@ router.get('/stats', (req, res) => {
   });
 });
 
-// GET /api/admin/orders — all orders across all users
-router.get('/orders', (req, res) => {
-  res.json(db.get('orders').value().slice().reverse());
+router.get('/orders', async (req, res) => {
+  res.json(await Order.find().sort({ createdAt: -1 }).lean());
 });
 
-// GET /api/admin/users
-router.get('/users', (req, res) => {
-  const users = db.get('users').value().map(({ password, ...rest }) => rest);
-  res.json(users);
+router.get('/users', async (req, res) => {
+  const users = await User.find().lean();
+  res.json(users.map(({ password, ...rest }) => rest));
 });
 
 module.exports = router;

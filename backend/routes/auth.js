@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const db = require('../db');
+const User = require('../models/User');
 const { verifyToken } = require('../middleware/auth');
 
 const router = express.Router();
@@ -14,23 +14,22 @@ function signToken(user) {
   );
 }
 
-// POST /api/auth/register
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
   const { name, email, password, referral } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
   if (password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters.' });
 
-  const existing = db.get('users').find({ email: email.toLowerCase() }).value();
+  const existing = await User.findOne({ email: email.toLowerCase() });
   if (existing) return res.status(409).json({ error: 'An account with this email already exists.' });
 
   let bonusPoints = 100;
   if (referral) {
-    const referrer = db.get('users').find({ referral }).value();
+    const referrer = await User.findOne({ referral });
     if (referrer) bonusPoints = 200;
   }
 
   const hashed = bcrypt.hashSync(password, 10);
-  const newUser = {
+  const newUser = await User.create({
     id: Date.now(),
     name,
     email: email.toLowerCase(),
@@ -39,78 +38,69 @@ router.post('/register', (req, res) => {
     points: bonusPoints,
     referral: 'SW-' + Math.random().toString(36).slice(2, 6).toUpperCase(),
     addresses: [],
-    cart: [],
-    createdAt: new Date().toISOString()
-  };
-  db.get('users').push(newUser).write();
+    cart: []
+  });
 
   const token = signToken(newUser);
-  const { password: _, ...safeUser } = newUser;
+  const safeUser = newUser.toObject();
+  delete safeUser.password;
   res.status(201).json({ token, user: safeUser });
 });
 
-// POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
 
-  const user = db.get('users').find({ email: email.toLowerCase() }).value();
+  const user = await User.findOne({ email: email.toLowerCase() });
   if (!user) return res.status(401).json({ error: 'Invalid email or password.' });
 
   const match = bcrypt.compareSync(password, user.password);
   if (!match) return res.status(401).json({ error: 'Invalid email or password.' });
 
   const token = signToken(user);
-  const { password: _, ...safeUser } = user;
+  const safeUser = user.toObject();
+  delete safeUser.password;
   res.json({ token, user: safeUser });
 });
 
-// GET /api/auth/me
-router.get('/me', verifyToken, (req, res) => {
-  const user = db.get('users').find({ id: req.user.id }).value();
+router.get('/me', verifyToken, async (req, res) => {
+  const user = await User.findOne({ id: req.user.id });
   if (!user) return res.status(404).json({ error: 'User not found.' });
-  const { password: _, ...safeUser } = user;
+  const safeUser = user.toObject();
+  delete safeUser.password;
   res.json(safeUser);
 });
 
-// ---- Address book ----
-// POST /api/auth/addresses
-router.post('/addresses', verifyToken, (req, res) => {
+router.post('/addresses', verifyToken, async (req, res) => {
   const { name, phone, line, city, pin } = req.body;
   if (!name || !phone || !line || !city || !pin) return res.status(400).json({ error: 'All address fields are required.' });
   const address = { id: Date.now(), name, phone, line, city, pin };
-  db.get('users').find({ id: req.user.id }).get('addresses').push(address).write();
+  await User.findOneAndUpdate({ id: req.user.id }, { $push: { addresses: address } });
   res.status(201).json(address);
 });
 
-// DELETE /api/auth/addresses/:addressId
-router.delete('/addresses/:addressId', verifyToken, (req, res) => {
-  const user = db.get('users').find({ id: req.user.id });
-  const addresses = user.get('addresses').value().filter(a => a.id !== +req.params.addressId);
-  user.set('addresses', addresses).write();
+router.delete('/addresses/:addressId', verifyToken, async (req, res) => {
+  await User.findOneAndUpdate(
+    { id: req.user.id },
+    { $pull: { addresses: { id: +req.params.addressId } } }
+  );
   res.json({ success: true });
 });
 
-// ---- Forgot / Reset password ----
-// NOTE: no real email service is connected in this demo. In production this endpoint
-// would email a reset link instead of returning the code directly in the response.
-const resetCodes = {}; // { email: { code, expiresAt } } — in-memory, resets on server restart
+const resetCodes = {};
 
-// POST /api/auth/forgot-password { email }
-router.post('/forgot-password', (req, res) => {
+router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
-  const user = db.get('users').find({ email: (email || '').toLowerCase() }).value();
+  const user = await User.findOne({ email: (email || '').toLowerCase() });
   if (!user) return res.status(404).json({ error: 'No account found with that email.' });
 
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  resetCodes[user.email] = { code, expiresAt: Date.now() + 10 * 60 * 1000 }; // 10 min
+  resetCodes[user.email] = { code, expiresAt: Date.now() + 10 * 60 * 1000 };
 
-  // DEMO MODE: return the code directly since no email/SMS provider is wired up.
-  res.json({ message: 'Reset code generated (demo mode — no real email sent).', demoCode: code });
+  res.json({ message: 'Reset code generated (demo mode - no real email sent).', demoCode: code });
 });
 
-// POST /api/auth/reset-password { email, code, newPassword }
-router.post('/reset-password', (req, res) => {
+router.post('/reset-password', async (req, res) => {
   const { email, code, newPassword } = req.body;
   const entry = resetCodes[(email || '').toLowerCase()];
   if (!entry || entry.code !== code || Date.now() > entry.expiresAt) {
@@ -118,8 +108,10 @@ router.post('/reset-password', (req, res) => {
   }
   if (!newPassword || newPassword.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters.' });
 
-  const userQ = db.get('users').find({ email: email.toLowerCase() });
-  userQ.assign({ password: bcrypt.hashSync(newPassword, 10) }).write();
+  await User.findOneAndUpdate(
+    { email: email.toLowerCase() },
+    { password: bcrypt.hashSync(newPassword, 10) }
+  );
   delete resetCodes[email.toLowerCase()];
   res.json({ success: true, message: 'Password reset successfully. You can now log in.' });
 });

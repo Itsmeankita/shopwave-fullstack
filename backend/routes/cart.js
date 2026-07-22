@@ -1,27 +1,24 @@
 const express = require('express');
-const db = require('../db');
+const User = require('../models/User');
 const { verifyToken } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(verifyToken);
 
-// GET /api/cart — current user's server-synced cart
-router.get('/', (req, res) => {
-  const user = db.get('users').find({ id: req.user.id }).value();
+router.get('/', async (req, res) => {
+  const user = await User.findOne({ id: req.user.id });
   res.json(user?.cart || []);
 });
 
-// PUT /api/cart — replace entire cart (used to sync from client on login / on every change)
-router.put('/', (req, res) => {
+router.put('/', async (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array.' });
-  db.get('users').find({ id: req.user.id }).assign({ cart: items }).write();
+  await User.findOneAndUpdate({ id: req.user.id }, { cart: items });
   res.json({ success: true, cart: items });
 });
 
-// DELETE /api/cart — clear cart (used after checkout)
-router.delete('/', (req, res) => {
-  db.get('users').find({ id: req.user.id }).assign({ cart: [] }).write();
+router.delete('/', async (req, res) => {
+  await User.findOneAndUpdate({ id: req.user.id }, { cart: [] });
   res.json({ success: true });
 });
 

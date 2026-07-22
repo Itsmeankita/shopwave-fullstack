@@ -1,11 +1,12 @@
 // ============================================================
-// server.js — ShopWave Backend Entry Point
+// server.js - ShopWave Backend Entry Point
 // ============================================================
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const db = require('./db');
+const Product = require('./models/Product');
+const { initDB } = require('./db');
 
 const authRoutes = require('./routes/auth');
 const productRoutes = require('./routes/products');
@@ -17,11 +18,10 @@ const cartRoutes = require('./routes/cart');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());               // allow requests from the frontend (any origin — fine for local dev)
-app.use(express.json({ limit: '5mb' })); // parse JSON bodies (5mb limit to allow base64 review images)
-app.use(morgan('dev'));        // request logging in the terminal
+app.use(cors());
+app.use(express.json({ limit: '5mb' }));
+app.use(morgan('dev'));
 
-// ---------- ROUTES ----------
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
@@ -29,36 +29,36 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/cart', cartRoutes);
 
-// GET /api/categories — list of distinct product categories
-app.get('/api/categories', (req, res) => {
-  const cats = [...new Set(db.get('products').value().map(p => p.category))];
+app.get('/api/categories', async (req, res) => {
+  const cats = await Product.distinct('category');
   res.json(cats);
 });
 
-// GET /api/health — simple health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'ShopWave API is running', products: db.get('products').size().value() });
+app.get('/api/health', async (req, res) => {
+  const count = await Product.countDocuments();
+  res.json({ status: 'ok', message: 'ShopWave API is running', products: count });
 });
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found.' });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
-async function start() {
-  console.log('⏳ Seeding product catalog (fetching real product data)...');
-  await db.initDB();
-  app.listen(PORT, () => {
-    console.log(`\n🚀 ShopWave API running at http://localhost:${PORT}`);
-    console.log(`📦 Products seeded: ${db.get('products').size().value()}`);
-    console.log(`👤 Admin login: admin@shopwave.com / admin123\n`);
-  });
+if (require.main === module) {
+  initDB()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`ShopWave API running at http://localhost:${PORT}`);
+        console.log('Admin login: admin@shopwave.com / admin123');
+      });
+    })
+    .catch((err) => {
+      console.error('Startup failed:', err.message);
+    });
 }
 
-start();
+module.exports = app;
